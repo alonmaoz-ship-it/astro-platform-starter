@@ -1,0 +1,99 @@
+---
+import Layout from '../layouts/Layout.astro';
+import type { ChargerConfig } from '../types';
+
+export const prerender = false;
+
+const apiBase = new URL('/api/tesla-charger', Astro.url);
+let chargers: ChargerConfig[] = [];
+let fetchError: string | null = null;
+
+try {
+    const res = await fetch(apiBase);
+    if (res.ok) {
+        const data = await res.json();
+        chargers = data.chargers ?? [];
+    } else {
+        fetchError = `Failed to load chargers (HTTP ${res.status})`;
+    }
+} catch (e) {
+    fetchError = 'Could not connect to charger API';
+}
+
+const statusColors: Record<ChargerConfig['status'], string> = {
+    available: 'text-green-400',
+    connected: 'text-yellow-400',
+    charging: 'text-blue-400',
+    error: 'text-red-400',
+};
+---
+
+<Layout title="Tesla Charger Dashboard">
+    <div class="py-10">
+        <h1 class="mb-2 text-3xl font-bold">Tesla Charger Dashboard</h1>
+        <p class="mb-8 text-white/60">Manage and monitor your Tesla charging stations.</p>
+
+        {fetchError && (
+            <div class="p-4 mb-6 text-red-300 border border-red-500 rounded-lg bg-red-900/20">
+                {fetchError}
+            </div>
+        )}
+
+        {chargers.length === 0 && !fetchError && (
+            <p class="text-white/50">No chargers registered yet. Use the API to register one.</p>
+        )}
+
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {chargers.map((charger) => (
+                <div class="p-5 border rounded-lg border-white/10 bg-white/5">
+                    <div class="flex items-start justify-between mb-3">
+                        <div>
+                            <h2 class="font-semibold text-lg">{charger.name}</h2>
+                            <p class="text-sm text-white/50">{charger.location}</p>
+                        </div>
+                        <span class={`text-xs font-medium uppercase tracking-wide ${statusColors[charger.status]}`}>
+                            {charger.status}
+                        </span>
+                    </div>
+
+                    <dl class="space-y-1 text-sm">
+                        <div class="flex justify-between">
+                            <dt class="text-white/50">Max power</dt>
+                            <dd>{charger.maxPower} kW</dd>
+                        </div>
+                        <div class="flex justify-between">
+                            <dt class="text-white/50">Charger ID</dt>
+                            <dd class="font-mono text-xs">{charger.id}</dd>
+                        </div>
+                        {charger.currentSession && (
+                            <>
+                                <div class="flex justify-between">
+                                    <dt class="text-white/50">Session started</dt>
+                                    <dd>{new Date(charger.currentSession.startTime).toLocaleTimeString()}</dd>
+                                </div>
+                                <div class="flex justify-between">
+                                    <dt class="text-white/50">Energy delivered</dt>
+                                    <dd>{charger.currentSession.energyDelivered} kWh</dd>
+                                </div>
+                            </>
+                        )}
+                    </dl>
+
+                    <p class="mt-3 text-xs text-white/30">
+                        Updated {new Date(charger.lastUpdated).toLocaleString()}
+                    </p>
+                </div>
+            ))}
+        </div>
+
+        <section class="mt-12">
+            <h2 class="mb-4 text-xl font-semibold">API Reference</h2>
+            <div class="p-5 space-y-3 font-mono text-sm border rounded-lg border-white/10 bg-white/5 text-white/80">
+                <p><span class="text-green-400">GET</span>    /api/tesla-charger          — list all chargers</p>
+                <p><span class="text-green-400">GET</span>    /api/tesla-charger?id=&lt;id&gt;  — get one charger</p>
+                <p><span class="text-yellow-400">POST</span>   /api/tesla-charger          — register / start / stop / update</p>
+                <p><span class="text-red-400">DELETE</span> /api/tesla-charger?id=&lt;id&gt;  — remove a charger</p>
+            </div>
+        </section>
+    </div>
+</Layout>
