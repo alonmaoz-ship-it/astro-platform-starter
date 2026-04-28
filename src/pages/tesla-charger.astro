@@ -65,7 +65,7 @@ const statusColors: Record<ChargerConfig['status'], string> = {
                             <dt class="text-white/50">Charger ID</dt>
                             <dd class="font-mono text-xs">{charger.id}</dd>
                         </div>
-                        {charger.currentSession && (
+                        {charger.status === 'charging' && charger.currentSession && (
                             <>
                                 <div class="flex justify-between">
                                     <dt class="text-white/50">Session started</dt>

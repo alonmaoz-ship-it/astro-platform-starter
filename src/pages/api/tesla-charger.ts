@@ -96,14 +96,10 @@ export const POST: APIRoute = async ({ request }) => {
         if (charger.status !== 'charging') {
             return jsonResponse({ error: 'No active charging session to stop' }, 409);
         }
-        const finishedSession: ChargingSession = {
-            ...charger.currentSession!,
-            endTime: new Date().toISOString(),
-        };
         const updated: ChargerConfig = {
             ...charger,
             status: 'available',
-            currentSession: finishedSession,
+            currentSession: undefined,
             lastUpdated: new Date().toISOString(),
         };
         await store.setJSON(chargerId, updated);
