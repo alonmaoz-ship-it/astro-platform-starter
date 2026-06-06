@@ -1,0 +1,264 @@
+---
+import Layout from '../layouts/Layout.astro';
+import type { ChargerConfig } from '../types';
+
+export const prerender = false;
+
+const apiBase = new URL('/api/tesla-charger', Astro.url);
+let chargers: ChargerConfig[] = [];
+let fetchError: string | null = null;
+
+try {
+    const res = await fetch(apiBase);
+    if (res.ok) {
+        const data = await res.json();
+        chargers = data.chargers ?? [];
+    } else {
+        fetchError = `Failed to load chargers (HTTP ${res.status})`;
+    }
+} catch (e) {
+    fetchError = 'Could not connect to charger API';
+}
+
+const statusColors: Record<ChargerConfig['status'], string> = {
+    available: 'text-green-400',
+    connected: 'text-yellow-400',
+    charging: 'text-blue-400',
+    error: 'text-red-400',
+};
+
+const statusBg: Record<ChargerConfig['status'], string> = {
+    available: 'bg-green-400/10 border-green-400/20',
+    connected: 'bg-yellow-400/10 border-yellow-400/20',
+    charging: 'bg-blue-400/10 border-blue-400/20',
+    error: 'bg-red-400/10 border-red-400/20',
+};
+---
+
+<Layout title="Tesla Charger Dashboard">
+    <div class="py-10">
+        <h1 class="mb-2 text-3xl font-bold">Tesla Charger Dashboard</h1>
+        <p class="mb-8 text-white/60">Manage and monitor your Tesla charging stations.</p>
+
+        {fetchError && (
+            <div class="p-4 mb-6 text-red-300 border border-red-500 rounded-lg bg-red-900/20">
+                {fetchError}
+            </div>
+        )}
+
+        <div id="toast" class="hidden fixed top-4 right-4 z-50 px-4 py-3 rounded-lg text-sm font-medium shadow-lg transition-all"></div>
+
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" id="charger-grid">
+            {chargers.length === 0 && !fetchError && (
+                <p class="text-white/50 col-span-full">No chargers registered yet. Add one below.</p>
+            )}
+
+            {chargers.map((charger) => (
+                <div class={`p-5 border rounded-lg ${statusBg[charger.status]}`} data-charger-id={charger.id}>
+                    <div class="flex items-start justify-between mb-3">
+                        <div>
+                            <h2 class="font-semibold text-lg">{charger.name}</h2>
+                            <p class="text-sm text-white/50">{charger.location}</p>
+                        </div>
+                        <span class={`text-xs font-medium uppercase tracking-wide ${statusColors[charger.status]}`}>
+                            {charger.status}
+                        </span>
+                    </div>
+
+                    <dl class="space-y-1 text-sm mb-4">
+                        <div class="flex justify-between">
+                            <dt class="text-white/50">Max power</dt>
+                            <dd>{charger.maxPower} kW</dd>
+                        </div>
+                        <div class="flex justify-between">
+                            <dt class="text-white/50">Charger ID</dt>
+                            <dd class="font-mono text-xs">{charger.id}</dd>
+                        </div>
+                        {charger.status === 'charging' && charger.currentSession && (
+                            <>
+                                <div class="flex justify-between">
+                                    <dt class="text-white/50">Session started</dt>
+                                    <dd>{new Date(charger.currentSession.startTime).toLocaleTimeString()}</dd>
+                                </div>
+                                <div class="flex justify-between">
+                                    <dt class="text-white/50">Energy delivered</dt>
+                                    <dd class="session-energy">{charger.currentSession.energyDelivered} kWh</dd>
+                                </div>
+                                {charger.currentSession.vehicleId && (
+                                    <div class="flex justify-between">
+                                        <dt class="text-white/50">Vehicle</dt>
+                                        <dd class="font-mono text-xs">{charger.currentSession.vehicleId}</dd>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </dl>
+
+                    <div class="flex gap-2 flex-wrap">
+                        {charger.status === 'available' && (
+                            <button
+                                class="px-3 py-1.5 text-xs font-medium rounded bg-yellow-500/20 text-yellow-300 hover:bg-yellow-500/30 transition-colors charger-action"
+                                data-action="connect"
+                                data-charger-id={charger.id}
+                            >Connect</button>
+                        )}
+                        {charger.status === 'connected' && (
+                            <>
+                                <button
+                                    class="px-3 py-1.5 text-xs font-medium rounded bg-blue-500/20 text-blue-300 hover:bg-blue-500/30 transition-colors charger-action"
+                                    data-action="start"
+                                    data-charger-id={charger.id}
+                                >Start charging</button>
+                                <button
+                                    class="px-3 py-1.5 text-xs font-medium rounded bg-white/10 text-white/60 hover:bg-white/20 transition-colors charger-action"
+                                    data-action="disconnect"
+                                    data-charger-id={charger.id}
+                                >Disconnect</button>
+                            </>
+                        )}
+                        {charger.status === 'charging' && (
+                            <button
+                                class="px-3 py-1.5 text-xs font-medium rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors charger-action"
+                                data-action="stop"
+                                data-charger-id={charger.id}
+                            >Stop charging</button>
+                        )}
+                        {charger.status !== 'charging' && (
+                            <button
+                                class="px-3 py-1.5 text-xs font-medium rounded bg-red-900/30 text-red-400/70 hover:bg-red-900/50 transition-colors charger-delete ml-auto"
+                                data-charger-id={charger.id}
+                            >Delete</button>
+                        )}
+                    </div>
+
+                    <p class="mt-3 text-xs text-white/30">
+                        Updated {new Date(charger.lastUpdated).toLocaleString()}
+                    </p>
+                </div>
+            ))}
+        </div>
+
+        <section class="mt-12">
+            <h2 class="mb-4 text-xl font-semibold">Register a Charger</h2>
+            <form id="register-form" class="p-5 border rounded-lg border-white/10 bg-white/5 space-y-4 max-w-md">
+                <div>
+                    <label class="block text-sm text-white/60 mb-1" for="reg-name">Name</label>
+                    <input id="reg-name" type="text" required placeholder="Home Garage"
+                        class="w-full px-3 py-2 rounded bg-white/10 border border-white/10 text-sm focus:outline-none focus:border-white/30" />
+                </div>
+                <div>
+                    <label class="block text-sm text-white/60 mb-1" for="reg-location">Location</label>
+                    <input id="reg-location" type="text" required placeholder="123 Main St"
+                        class="w-full px-3 py-2 rounded bg-white/10 border border-white/10 text-sm focus:outline-none focus:border-white/30" />
+                </div>
+                <div>
+                    <label class="block text-sm text-white/60 mb-1" for="reg-power">Max power (kW)</label>
+                    <input id="reg-power" type="number" min="0.1" max="350" step="0.1" value="11.5"
+                        class="w-full px-3 py-2 rounded bg-white/10 border border-white/10 text-sm focus:outline-none focus:border-white/30" />
+                </div>
+                <button type="submit"
+                    class="px-4 py-2 bg-white text-black text-sm font-semibold rounded hover:bg-white/90 transition-colors">
+                    Register
+                </button>
+            </form>
+        </section>
+
+        <section class="mt-12">
+            <h2 class="mb-4 text-xl font-semibold">API Reference</h2>
+            <div class="p-5 space-y-3 font-mono text-sm border rounded-lg border-white/10 bg-white/5 text-white/80">
+                <p><span class="text-green-400">GET</span>    /api/tesla-charger                 — list all chargers</p>
+                <p><span class="text-green-400">GET</span>    /api/tesla-charger?id=&lt;id&gt;        — get one charger</p>
+                <p><span class="text-yellow-400">POST</span>   /api/tesla-charger <span class="text-white/40">action: register</span>  — register a new charger</p>
+                <p><span class="text-yellow-400">POST</span>   /api/tesla-charger <span class="text-white/40">action: connect</span>   — mark vehicle as connected</p>
+                <p><span class="text-yellow-400">POST</span>   /api/tesla-charger <span class="text-white/40">action: disconnect</span> — disconnect vehicle</p>
+                <p><span class="text-yellow-400">POST</span>   /api/tesla-charger <span class="text-white/40">action: start</span>     — start charging session</p>
+                <p><span class="text-yellow-400">POST</span>   /api/tesla-charger <span class="text-white/40">action: stop</span>      — stop charging session</p>
+                <p><span class="text-yellow-400">POST</span>   /api/tesla-charger <span class="text-white/40">action: energyUpdate</span> — update kWh delivered</p>
+                <p><span class="text-yellow-400">POST</span>   /api/tesla-charger <span class="text-white/40">action: update</span>    — update charger metadata</p>
+                <p><span class="text-red-400">DELETE</span> /api/tesla-charger?id=&lt;id&gt;        — remove a charger</p>
+            </div>
+        </section>
+    </div>
+</Layout>
+
+<script>
+    const API = '/api/tesla-charger';
+
+    function showToast(msg: string, ok = true) {
+        const el = document.getElementById('toast')!;
+        el.textContent = msg;
+        el.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg text-sm font-medium shadow-lg transition-all ${
+            ok ? 'bg-green-800 text-green-200' : 'bg-red-800 text-red-200'
+        }`;
+        el.classList.remove('hidden');
+        setTimeout(() => el.classList.add('hidden'), 3000);
+    }
+
+    async function apiPost(body: Record<string, unknown>) {
+        const res = await fetch(API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+        return data;
+    }
+
+    async function apiDelete(id: string) {
+        const res = await fetch(`${API}?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+        return data;
+    }
+
+    document.querySelectorAll<HTMLButtonElement>('.charger-action').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const action = btn.dataset.action!;
+            const chargerId = btn.dataset.chargerId!;
+            btn.disabled = true;
+            try {
+                await apiPost({ action, chargerId });
+                showToast(`Action "${action}" succeeded`);
+                window.location.reload();
+            } catch (e: any) {
+                showToast(e.message, false);
+                btn.disabled = false;
+            }
+        });
+    });
+
+    document.querySelectorAll<HTMLButtonElement>('.charger-delete').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const chargerId = btn.dataset.chargerId!;
+            if (!confirm('Delete this charger?')) return;
+            btn.disabled = true;
+            try {
+                await apiDelete(chargerId);
+                showToast('Charger deleted');
+                window.location.reload();
+            } catch (e: any) {
+                showToast(e.message, false);
+                btn.disabled = false;
+            }
+        });
+    });
+
+    document.getElementById('register-form')!.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const form = e.target as HTMLFormElement;
+        const name = (form.querySelector('#reg-name') as HTMLInputElement).value.trim();
+        const location = (form.querySelector('#reg-location') as HTMLInputElement).value.trim();
+        const maxPower = parseFloat((form.querySelector('#reg-power') as HTMLInputElement).value);
+        const btn = form.querySelector('button')!;
+        btn.disabled = true;
+        try {
+            await apiPost({ action: 'register', config: { name, location, maxPower } });
+            showToast('Charger registered');
+            window.location.reload();
+        } catch (e: any) {
+            showToast(e.message, false);
+            btn.disabled = false;
+        }
+    });
+</script>
