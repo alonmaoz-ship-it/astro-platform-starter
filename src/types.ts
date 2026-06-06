@@ -20,11 +20,13 @@ export type ChargerConfig = {
     lastUpdated: string;
 };
 
-export type ChargerAction = 'register' | 'start' | 'stop' | 'update';
+export type ChargerAction = 'register' | 'start' | 'stop' | 'connect' | 'disconnect' | 'energyUpdate' | 'update';
 
 export type ChargerActionRequest = {
     action: ChargerAction;
     chargerId?: string;
+    vehicleId?: string;
+    energyDelivered?: number;
     config?: Partial<ChargerConfig>;
 };
 

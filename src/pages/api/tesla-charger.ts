@@ -6,9 +6,17 @@ export const prerender = false;
 
 const STORE_NAME = 'tesla-chargers';
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
+const MAX_POWER_KW = 350;
 
 function jsonResponse(data: unknown, status = 200): Response {
     return new Response(JSON.stringify(data), { status, headers: JSON_HEADERS });
+}
+
+function validateMaxPower(kw: unknown): string | null {
+    const n = Number(kw);
+    if (!Number.isFinite(n) || n <= 0) return '"maxPower" must be a positive number';
+    if (n > MAX_POWER_KW) return `"maxPower" cannot exceed ${MAX_POWER_KW} kW`;
+    return null;
 }
 
 export const GET: APIRoute = async (context) => {
@@ -42,19 +50,23 @@ export const POST: APIRoute = async ({ request }) => {
         return jsonResponse({ error: 'Invalid JSON body' }, 400);
     }
 
-    const { action, chargerId, config } = body;
+    const { action, chargerId, config, vehicleId, energyDelivered } = body;
     const store = getStore(STORE_NAME);
 
     if (action === 'register') {
         if (!config?.name || !config?.location) {
             return jsonResponse({ error: '"name" and "location" are required to register a charger' }, 400);
         }
+        const powerKw = config.maxPower ?? 11.5;
+        const powerError = validateMaxPower(powerKw);
+        if (powerError) return jsonResponse({ error: powerError }, 400);
+
         const id = `charger-${Date.now()}`;
         const newCharger: ChargerConfig = {
             id,
             name: config.name,
             location: config.location,
-            maxPower: config.maxPower ?? 11.5,
+            maxPower: powerKw,
             status: 'available',
             lastUpdated: new Date().toISOString(),
         };
@@ -71,16 +83,52 @@ export const POST: APIRoute = async ({ request }) => {
         return jsonResponse({ error: `Charger "${chargerId}" not found` }, 404);
     }
 
+    if (action === 'connect') {
+        if (charger.status === 'charging') {
+            return jsonResponse({ error: 'Cannot connect while a charging session is active' }, 409);
+        }
+        if (charger.status === 'connected') {
+            return jsonResponse({ error: 'Vehicle is already connected' }, 409);
+        }
+        const updated: ChargerConfig = {
+            ...charger,
+            status: 'connected',
+            lastUpdated: new Date().toISOString(),
+        };
+        await store.setJSON(chargerId, updated);
+        return jsonResponse(updated);
+    }
+
+    if (action === 'disconnect') {
+        if (charger.status === 'charging') {
+            return jsonResponse({ error: 'Stop the charging session before disconnecting' }, 409);
+        }
+        if (charger.status === 'available') {
+            return jsonResponse({ error: 'No vehicle connected' }, 409);
+        }
+        const updated: ChargerConfig = {
+            ...charger,
+            status: 'available',
+            currentSession: undefined,
+            lastUpdated: new Date().toISOString(),
+        };
+        await store.setJSON(chargerId, updated);
+        return jsonResponse(updated);
+    }
+
     if (action === 'start') {
         if (charger.status === 'charging') {
             return jsonResponse({ error: 'Charger is already in a charging session' }, 409);
+        }
+        if (charger.status === 'error') {
+            return jsonResponse({ error: 'Charger is in an error state and cannot start a session' }, 409);
         }
         const session: ChargingSession = {
             id: `session-${Date.now()}`,
             startTime: new Date().toISOString(),
             energyDelivered: 0,
             maxPower: charger.maxPower,
-            vehicleId: config?.currentSession?.vehicleId,
+            vehicleId: vehicleId ?? config?.currentSession?.vehicleId,
         };
         const updated: ChargerConfig = {
             ...charger,
@@ -93,13 +141,33 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     if (action === 'stop') {
-        if (charger.status !== 'charging') {
+        if (charger.status !== 'charging' || !charger.currentSession) {
             return jsonResponse({ error: 'No active charging session to stop' }, 409);
+        }
+        const closedSession: ChargingSession = {
+            ...charger.currentSession,
+            endTime: new Date().toISOString(),
+        };
+        const updated: ChargerConfig = {
+            ...charger,
+            status: 'connected',
+            currentSession: undefined,
+            lastUpdated: new Date().toISOString(),
+        };
+        await store.setJSON(chargerId, updated);
+        return jsonResponse({ charger: updated, completedSession: closedSession });
+    }
+
+    if (action === 'energyUpdate') {
+        if (charger.status !== 'charging' || !charger.currentSession) {
+            return jsonResponse({ error: 'No active charging session to update' }, 409);
+        }
+        if (typeof energyDelivered !== 'number' || !Number.isFinite(energyDelivered) || energyDelivered < 0) {
+            return jsonResponse({ error: '"energyDelivered" must be a non-negative number (kWh)' }, 400);
         }
         const updated: ChargerConfig = {
             ...charger,
-            status: 'available',
-            currentSession: undefined,
+            currentSession: { ...charger.currentSession, energyDelivered },
             lastUpdated: new Date().toISOString(),
         };
         await store.setJSON(chargerId, updated);
@@ -110,11 +178,16 @@ export const POST: APIRoute = async ({ request }) => {
         if (!config) {
             return jsonResponse({ error: '"config" fields are required for an update' }, 400);
         }
-        const { id: _id, currentSession: _session, ...safeUpdates } = config as ChargerConfig;
+        if (config.maxPower !== undefined) {
+            const powerError = validateMaxPower(config.maxPower);
+            if (powerError) return jsonResponse({ error: powerError }, 400);
+        }
+        const { id: _id, currentSession: _session, status: _status, ...safeUpdates } = config as ChargerConfig;
         const updated: ChargerConfig = {
             ...charger,
             ...safeUpdates,
             id: charger.id,
+            status: charger.status,
             lastUpdated: new Date().toISOString(),
         };
         await store.setJSON(chargerId, updated);
@@ -133,11 +206,11 @@ export const DELETE: APIRoute = async (context) => {
     }
 
     const store = getStore(STORE_NAME);
-    const charger = await store.get(chargerId, { type: 'json' }) as ChargerConfig | null;
+    const charger = (await store.get(chargerId, { type: 'json' })) as ChargerConfig | null;
     if (!charger) {
         return jsonResponse({ error: `Charger "${chargerId}" not found` }, 404);
     }
-    if ((charger as ChargerConfig).status === 'charging') {
+    if (charger.status === 'charging') {
         return jsonResponse({ error: 'Cannot delete a charger with an active session' }, 409);
     }
 
